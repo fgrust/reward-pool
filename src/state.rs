@@ -147,7 +147,18 @@ impl Pack for StakeUser {
 
 const DAILY_TS: i64 = 86_400;
 
+pub struct InitStakeUserParams {
+    pub pool_pubkey: Pubkey,
+    pub owner: Pubkey,
+}
+
 impl StakeUser {
+    pub fn init(&mut self, params: InitStakeUserParams) {
+        self.is_initialized = true;
+        self.pool_pubkey = params.pool_pubkey;
+        self.owner = params.owner;
+    }
+
     pub fn stake(&mut self, amount: u64) -> ProgramResult {
         self.stake_amount = self
             .stake_amount
@@ -167,13 +178,20 @@ impl StakeUser {
         Ok(())
     }
 
-    pub fn update_reward_owed(&mut self, r: u64, current_ts: UnixTimestamp) -> ProgramResult {
+    pub fn update_reward_owed(
+        &mut self,
+        numerator: u64,
+        denominator: u64,
+        current_ts: UnixTimestamp,
+    ) -> ProgramResult {
         let calc_period = current_ts
             .checked_sub(self.last_update)
             .ok_or(CustomError::CalculationFailure)?;
         if calc_period > 0 {
-            self.reward_owed = r
+            self.reward_owed = numerator
                 .checked_mul(self.stake_amount)
+                .ok_or(CustomError::CalculationFailure)?
+                .checked_div(denominator)
                 .ok_or(CustomError::CalculationFailure)?
                 .checked_mul(u64::try_from(calc_period).unwrap())
                 .ok_or(CustomError::CalculationFailure)?

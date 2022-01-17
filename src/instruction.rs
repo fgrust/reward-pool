@@ -14,11 +14,12 @@ pub enum InstructionType {
     /// Create stake pool
     ///
     /// 0. `[writable]` stake pool account to create
-    /// 1. `[]` staking token mint
-    /// 2. `[writable]` staking token reserve account
-    /// 3. `[wrtiable]` reward token mint
-    /// 4. `[]` rent sysvar
-    /// 5. `[]` token program id
+    /// 1. `[]` authority generated from bump_seed to mint reward
+    /// 2. `[]` staking token mint
+    /// 3. `[writable]` staking token reserve account
+    /// 4. `[wrtiable]` reward token mint
+    /// 5. `[]` rent sysvar
+    /// 6. `[]` token program id
     CreatePool(InitData),
     /// Create stake user
     ///
@@ -27,11 +28,10 @@ pub enum InstructionType {
     /// 2. `[signer]` stake user owner account
     /// 3. `[]` rent sysvar
     /// 4. `[]` clock sysvar
-    /// 5. `[]` token program id
     CreateStakeUser,
     /// Stake token to the pool
     ///
-    /// 0. `[writable]` stake pool account
+    /// 0. `[]` stake pool account
     /// 1. `[writable]` stake user account
     /// 2. `[signer]` user transfer authority
     /// 3. `[signer]` stake user owner account
@@ -42,7 +42,7 @@ pub enum InstructionType {
     Stake(StakeData),
     /// Unstake token to the pool
     ///
-    /// 0. `[writable]` stake pool account
+    /// 0. `[]` stake pool account
     /// 1. `[writable]` stake user account
     /// 2. `[]` authority generated from bump_seed to mint reward
     /// 3. `[signer]` stake user owner account
@@ -72,6 +72,8 @@ pub enum InstructionType {
 #[repr(C)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct InitData {
+    /// bump_seed to generate pool authority
+    pub bump_seed: u8,
     /// Daily reward numerator
     pub reward_numerator: u64,
     /// Daily reward denominator
@@ -93,9 +95,11 @@ impl InstructionType {
 
         Ok(match tag {
             0x1 => {
+                let (bump_seed, rest) = unpack_u8(rest)?;
                 let (reward_numerator, rest) = unpack_u64(rest)?;
                 let (reward_denominator, _) = unpack_u64(rest)?;
                 Self::CreatePool(InitData {
+                    bump_seed,
                     reward_numerator,
                     reward_denominator,
                 })
@@ -119,10 +123,12 @@ impl InstructionType {
         let mut buf = Vec::with_capacity(size_of::<Self>());
         match *self {
             Self::CreatePool(InitData {
+                bump_seed,
                 reward_numerator,
                 reward_denominator,
             }) => {
                 buf.push(0x1);
+                buf.extend_from_slice(&bump_seed.to_le_bytes());
                 buf.extend_from_slice(&reward_numerator.to_le_bytes());
                 buf.extend_from_slice(&reward_denominator.to_le_bytes());
             }
@@ -148,6 +154,19 @@ impl InstructionType {
     }
 }
 
+fn unpack_u8(input: &[u8]) -> Result<(u8, &[u8]), ProgramError> {
+    if input.is_empty() {
+        return Err(CustomError::InstructionUnpackError.into());
+    }
+    let (bytes, rest) = input.split_at(1);
+    let value = bytes
+        .get(..1)
+        .and_then(|slice| slice.try_into().ok())
+        .map(u8::from_le_bytes)
+        .ok_or(CustomError::InstructionUnpackError)?;
+    Ok((value, rest))
+}
+
 fn unpack_u64(input: &[u8]) -> Result<(u64, &[u8]), ProgramError> {
     if input.len() < 8 {
         return Err(CustomError::InstructionUnpackError.into());
@@ -164,6 +183,7 @@ fn unpack_u64(input: &[u8]) -> Result<(u64, &[u8]), ProgramError> {
 pub fn create_stake_pool(
     program_id: Pubkey,
     stake_pool_pubkey: Pubkey,
+    stake_pool_authority_pubkey: Pubkey,
     staking_token_mint_pubkey: Pubkey,
     staking_token_reserve_pubkey: Pubkey,
     reward_token_mint_pubkey: Pubkey,
@@ -173,6 +193,7 @@ pub fn create_stake_pool(
 
     let accounts = vec![
         AccountMeta::new(stake_pool_pubkey, false),
+        AccountMeta::new_readonly(stake_pool_authority_pubkey, false),
         AccountMeta::new_readonly(staking_token_mint_pubkey, false),
         AccountMeta::new(staking_token_reserve_pubkey, false),
         AccountMeta::new(reward_token_mint_pubkey, false),
@@ -200,8 +221,6 @@ pub fn create_stake_user(
         AccountMeta::new(stake_user_pubkey, false),
         AccountMeta::new(stake_owner_pubkey, true),
         AccountMeta::new_readonly(rent::id(), false),
-        AccountMeta::new_readonly(clock::id(), false),
-        AccountMeta::new_readonly(spl_token::id(), false),
     ];
 
     Ok(Instruction {
@@ -224,7 +243,7 @@ pub fn stake(
     let data = InstructionType::Stake(StakeData { amount }).pack();
 
     let accounts = vec![
-        AccountMeta::new(stake_pool_pubkey, false),
+        AccountMeta::new_readonly(stake_pool_pubkey, false),
         AccountMeta::new(stake_user_pubkey, false),
         AccountMeta::new_readonly(user_transfer_authority_pubkey, true),
         AccountMeta::new_readonly(stake_owner_pubkey, true),
