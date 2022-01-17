@@ -10,6 +10,8 @@ use thiserror::Error;
 pub enum CustomError {
     #[error("Incorrect program instruction")]
     IncorrectInstruction,
+    #[error("Instruction unpack is failed")]
+    InstructionUnpackError,
     #[error("CalculationFailure")]
     CalculationFailure,
     #[error("Insufficient liquidity available")]
@@ -42,6 +44,7 @@ impl PrintProgramError for CustomError {
     {
         match self {
             CustomError::IncorrectInstruction => msg!("Error: Incorrect program instruction"),
+            CustomError::InstructionUnpackError => msg!("Error: Instruction unpacking is failed"),
             CustomError::CalculationFailure => msg!("Error: Failed calculation"),
             CustomError::InsufficientLiquidity => msg!("Error: Insufficient liquidity available"),
             CustomError::InsufficientClaimAmount => msg!("Error: No rewards to claim"),
