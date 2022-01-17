@@ -10,6 +10,13 @@ use thiserror::Error;
 pub enum CustomError {
     #[error("Incorrect program instruction")]
     IncorrectInstruction,
+    #[error("CalculationFailure")]
+    CalculationFailure,
+    #[error("Insufficient liquidity available")]
+    InsufficientLiquidity,
+    /// Insufficient claim amount
+    #[error("Insufficient claim amount")]
+    InsufficientClaimAmount,
 }
 
 impl From<CustomError> for ProgramError {
@@ -34,7 +41,10 @@ impl PrintProgramError for CustomError {
             + num_traits::FromPrimitive,
     {
         match self {
-            CustomError::IncorrectInstruction => msg!("Incorrect program instruction"),
+            CustomError::IncorrectInstruction => msg!("Error: Incorrect program instruction"),
+            CustomError::CalculationFailure => msg!("Error: Failed calculation"),
+            CustomError::InsufficientLiquidity => msg!("Error: Insufficient liquidity available"),
+            CustomError::InsufficientClaimAmount => msg!("Error: No rewards to claim"),
         }
     }
 }
