@@ -55,6 +55,7 @@ pub enum InstructionType {
     ///
     /// 0. `[]` stake pool account
     /// 1. `[writable]` stake user account
+    /// 2. `[signer]` stake owner account
     /// 2. `[]` authorty generated from bump_seed to mint reward
     /// 2. `[writable]` reward token mint
     /// 3. `[writable]` reward token account
@@ -65,7 +66,7 @@ pub enum InstructionType {
     ///
     /// 0. `[]` stake pool account
     /// 1. `[]` clock sysvar
-    /// 2. `[]` array of staking user account
+    /// 2. `[writable]` array of staking user account
     Refresh,
 }
 

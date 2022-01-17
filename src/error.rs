@@ -48,6 +48,8 @@ pub enum CustomError {
     InsufficientFunds,
     #[error("Token transfer failed")]
     TokenTransferFailed,
+    #[error("Token mint to failed")]
+    TokenMintToFailed,
 }
 
 impl From<CustomError> for ProgramError {
@@ -104,6 +106,7 @@ impl PrintProgramError for CustomError {
             CustomError::InvalidStakeOwner => msg!("Error: Invalid stake user owner"),
             CustomError::InsufficientFunds => msg!("Error: Insufficient funds"),
             CustomError::TokenTransferFailed => msg!("Error: Token transfer failed"),
+            CustomError::TokenMintToFailed => msg!("Error: Token mint to failed"),
         }
     }
 }

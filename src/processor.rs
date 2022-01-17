@@ -257,12 +257,103 @@ pub fn process_unstake(
     Ok(())
 }
 
-///
-pub fn process_claim(_program_id: &Pubkey, _accounts: &[AccountInfo]) -> ProgramResult {
+/// For task 2: Claim rewards owed
+pub fn process_claim(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
+    let account_info_iter = &mut accounts.iter();
+    let stake_pool_info = next_account_info(account_info_iter)?;
+    let stake_user_info = next_account_info(account_info_iter)?;
+    let stake_owner_info = next_account_info(account_info_iter)?;
+    let stake_pool_authority_info = next_account_info(account_info_iter)?;
+    let reward_mint_info = next_account_info(account_info_iter)?;
+    let reward_token_info = next_account_info(account_info_iter)?;
+    let clock = &Clock::from_account_info(next_account_info(account_info_iter)?)?;
+    let token_program_info = next_account_info(account_info_iter)?;
+
+    if stake_pool_info.owner != program_id || stake_user_info.owner != program_id {
+        return Err(CustomError::InvalidAccountOwner.into());
+    }
+
+    let mut stake_user = StakeUser::unpack(&stake_user_info.data.borrow_mut())?;
+    if stake_user.pool_pubkey != *stake_pool_info.key {
+        return Err(CustomError::InvalidStakeOwner.into());
+    }
+    if stake_user.owner != *stake_owner_info.key {
+        return Err(CustomError::InvalidStakeOwner.into());
+    }
+    if !stake_owner_info.is_signer {
+        return Err(CustomError::InvalidSigner.into());
+    }
+    let stake_pool = Pool::unpack(&stake_pool_info.data.borrow())?;
+    let reward_token = unpack_token_account(reward_token_info, token_program_info.key)?;
+    if stake_pool.reward_mint != *reward_mint_info.key {
+        return Err(CustomError::InvalidTokenMint.into());
+    }
+    if reward_token_info.owner == stake_pool_authority_info.key {
+        return Err(CustomError::InvalidAccountOwner.into());
+    }
+    if reward_token.mint != *reward_mint_info.key {
+        return Err(CustomError::InvalidTokenMint.into());
+    }
+    let stake_pool_authority_signer_seeds =
+        &[stake_pool_info.key.as_ref(), &[stake_pool.bump_seed]];
+    if *stake_pool_authority_info.key
+        != Pubkey::create_program_address(stake_pool_authority_signer_seeds, program_id)?
+    {
+        return Err(CustomError::InvalidPoolAuthority.into());
+    }
+
+    if stake_user.stake_amount != 0 {
+        stake_user.update_reward_owed(
+            stake_pool.reward_numerator,
+            stake_pool.reward_denominator,
+            clock.unix_timestamp,
+        )?;
+    }
+
+    let amount = stake_user.claim()?;
+    StakeUser::pack(stake_user, &mut stake_user_info.data.borrow_mut())?;
+
+    spl_token_mint_to(TokenMintToParams {
+        mint: reward_mint_info.clone(),
+        destination: reward_token_info.clone(),
+        amount,
+        authority: stake_pool_authority_info.clone(),
+        authority_signer_seeds: stake_pool_authority_signer_seeds,
+        token_program: token_program_info.clone(),
+    })?;
+
     Ok(())
 }
 
-pub fn process_refresh(_program_id: &Pubkey, _accounts: &[AccountInfo]) -> ProgramResult {
+pub fn process_refresh(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
+    let account_info_iter = &mut accounts.iter();
+    let stake_pool_info = next_account_info(account_info_iter)?;
+    let clock = &Clock::from_account_info(next_account_info(account_info_iter)?)?;
+
+    if stake_pool_info.owner != program_id {
+        return Err(CustomError::InvalidAccountOwner.into());
+    }
+
+    let stake_pool = Pool::unpack(&stake_pool_info.data.borrow())?;
+
+    for stake_user_info in account_info_iter {
+        if stake_user_info.owner != program_id {
+            continue;
+        }
+        let mut stake_user = StakeUser::unpack(&stake_user_info.data.borrow_mut())?;
+        if stake_user.pool_pubkey != *stake_pool_info.key {
+            continue;
+        }
+        if stake_user.stake_amount != 0 {
+            stake_user.update_reward_owed(
+                stake_pool.reward_numerator,
+                stake_pool.reward_denominator,
+                clock.unix_timestamp,
+            )?;
+            StakeUser::pack(stake_user, &mut stake_user_info.data.borrow_mut())?;
+        }
+    }
+
     Ok(())
 }
 
@@ -333,6 +424,15 @@ struct TokenTransferParams<'a: 'b, 'b> {
     token_program: AccountInfo<'a>,
 }
 
+struct TokenMintToParams<'a: 'b, 'b> {
+    mint: AccountInfo<'a>,
+    destination: AccountInfo<'a>,
+    amount: u64,
+    authority: AccountInfo<'a>,
+    authority_signer_seeds: &'b [&'b [u8]],
+    token_program: AccountInfo<'a>,
+}
+
 fn spl_token_init_account(params: TokenInitializeAccountParams<'_>) -> ProgramResult {
     let TokenInitializeAccountParams {
         account,
@@ -392,6 +492,30 @@ fn spl_token_transfer(params: TokenTransferParams<'_, '_>) -> ProgramResult {
         authority_signer_seeds,
     );
     result.map_err(|_| CustomError::TokenTransferFailed.into())
+}
+
+fn spl_token_mint_to(params: TokenMintToParams<'_, '_>) -> ProgramResult {
+    let TokenMintToParams {
+        mint,
+        destination,
+        authority,
+        token_program,
+        amount,
+        authority_signer_seeds,
+    } = params;
+    let result = invoke_optionally_signed(
+        &spl_token::instruction::mint_to(
+            token_program.key,
+            mint.key,
+            destination.key,
+            authority.key,
+            &[],
+            amount,
+        )?,
+        &[mint, destination, authority, token_program],
+        authority_signer_seeds,
+    );
+    result.map_err(|_| CustomError::TokenMintToFailed.into())
 }
 
 fn invoke_optionally_signed(
