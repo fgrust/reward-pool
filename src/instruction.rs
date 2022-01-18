@@ -193,7 +193,7 @@ pub fn create_stake_pool(
     let data = InstructionType::CreatePool(init_data).pack();
 
     let accounts = vec![
-        AccountMeta::new(stake_pool_pubkey, false),
+        AccountMeta::new(stake_pool_pubkey, true),
         AccountMeta::new_readonly(stake_pool_authority_pubkey, false),
         AccountMeta::new_readonly(staking_token_mint_pubkey, false),
         AccountMeta::new(staking_token_reserve_pubkey, false),

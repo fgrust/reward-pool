@@ -529,3 +529,294 @@ fn invoke_optionally_signed(
         invoke_signed(instruction, account_infos, &[authority_signer_seeds])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::instruction::create_stake_pool;
+
+    use solana_program::program_stubs;
+    use solana_sdk::account::{create_account_for_test, create_is_signer_account_infos, Account};
+    use spl_token::instruction::{initialize_account, initialize_mint};
+
+    const STAKE_PROGRAM_ID: Pubkey = Pubkey::new_from_array([3u8; 32]);
+
+    struct TestSyscallStubs {}
+    impl program_stubs::SyscallStubs for TestSyscallStubs {
+        fn sol_invoke_signed(
+            &self,
+            instruction: &Instruction,
+            account_infos: &[AccountInfo],
+            signers_seeds: &[&[&[u8]]],
+        ) -> ProgramResult {
+            let mut new_account_infos = vec![];
+
+            // mimic check for token program in accounts
+            if !account_infos.iter().any(|x| *x.key == spl_token::id()) {
+                return Err(ProgramError::InvalidAccountData);
+            }
+
+            for meta in instruction.accounts.iter() {
+                for account_info in account_infos.iter() {
+                    if meta.pubkey == *account_info.key {
+                        let mut new_account_info = account_info.clone();
+                        for seeds in signers_seeds.iter() {
+                            let signer =
+                                Pubkey::create_program_address(seeds, &STAKE_PROGRAM_ID).unwrap();
+                            if *account_info.key == signer {
+                                new_account_info.is_signer = true;
+                            }
+                        }
+                        new_account_infos.push(new_account_info);
+                    }
+                }
+            }
+
+            spl_token::processor::Processor::process(
+                &instruction.program_id,
+                &new_account_infos,
+                &instruction.data,
+            )
+        }
+    }
+
+    struct StakePoolInfo {
+        bump_seed: u8,
+        authority_key: Pubkey,
+        stake_pool_key: Pubkey,
+        stake_pool_account: Account,
+        stake_token_mint_key: Pubkey,
+        stake_token_mint_account: Account,
+        reserved_key: Pubkey,
+        reserved_account: Account,
+        reward_mint_key: Pubkey,
+        reward_mint_account: Account,
+    }
+
+    impl StakePoolInfo {
+        pub fn new(user_key: Pubkey) -> Self {
+            let stake_pool_key = Pubkey::new_unique();
+            let stake_pool_account = Account::new(0, Pool::LEN, &STAKE_PROGRAM_ID);
+            let (authority_key, bump_seed) =
+                Pubkey::find_program_address(&[&stake_pool_key.to_bytes()[..]], &STAKE_PROGRAM_ID);
+
+            let (stake_token_mint_key, stake_token_mint_account) =
+                create_mint(&spl_token::id(), &user_key, None);
+            let reserved_key = Pubkey::new_unique();
+            let reserved_account = Account::new(
+                account_minimum_balance(),
+                spl_token::state::Account::get_packed_len(),
+                &spl_token::id(),
+            );
+            let reward_mint_key = Pubkey::new_unique();
+            let reward_mint_account = Account::new(
+                mint_minimum_balance(),
+                spl_token::state::Mint::get_packed_len(),
+                &spl_token::id(),
+            );
+
+            StakePoolInfo {
+                bump_seed,
+                authority_key,
+                stake_pool_key,
+                stake_pool_account,
+                stake_token_mint_key,
+                stake_token_mint_account,
+                reserved_key,
+                reserved_account,
+                reward_mint_key,
+                reward_mint_account,
+            }
+        }
+
+        pub fn initialize_stake_pool(
+            &mut self,
+            reward_numerator: u64,
+            reward_denominator: u64,
+        ) -> ProgramResult {
+            do_process_instruction(
+                create_stake_pool(
+                    STAKE_PROGRAM_ID,
+                    self.stake_pool_key,
+                    self.authority_key,
+                    self.stake_token_mint_key,
+                    self.reserved_key,
+                    self.reward_mint_key,
+                    InitData {
+                        bump_seed: self.bump_seed,
+                        reward_numerator,
+                        reward_denominator,
+                    },
+                )
+                .unwrap(),
+                vec![
+                    &mut self.stake_pool_account,
+                    &mut Account::default(),
+                    &mut self.stake_token_mint_account,
+                    &mut self.reserved_account,
+                    &mut self.reward_mint_account,
+                    &mut create_account_for_test(&Rent::free()),
+                    &mut Account::default(),
+                ],
+            )
+        }
+    }
+
+    fn test_syscall_stubs() {
+        use std::sync::Once;
+        static ONCE: Once = Once::new();
+
+        ONCE.call_once(|| {
+            program_stubs::set_syscall_stubs(Box::new(TestSyscallStubs {}));
+        });
+    }
+
+    fn mint_minimum_balance() -> u64 {
+        Rent::default().minimum_balance(spl_token::state::Mint::get_packed_len())
+    }
+
+    fn account_minimum_balance() -> u64 {
+        Rent::default().minimum_balance(spl_token::state::Account::get_packed_len())
+    }
+
+    fn do_process_instruction(
+        instruction: Instruction,
+        accounts: Vec<&mut Account>,
+    ) -> ProgramResult {
+        test_syscall_stubs();
+
+        let mut account_clones = accounts.iter().map(|x| (*x).clone()).collect::<Vec<_>>();
+        let mut meta = instruction
+            .accounts
+            .iter()
+            .zip(account_clones.iter_mut())
+            .map(|(account_meta, account)| (&account_meta.pubkey, account_meta.is_signer, account))
+            .collect::<Vec<_>>();
+        let mut account_infos = create_is_signer_account_infos(&mut meta);
+        let res = if instruction.program_id == STAKE_PROGRAM_ID {
+            process(&instruction.program_id, &account_infos, &instruction.data)
+        } else {
+            spl_token::processor::Processor::process(
+                &instruction.program_id,
+                &account_infos,
+                &instruction.data,
+            )
+        };
+
+        if res.is_ok() {
+            let mut account_metas = instruction
+                .accounts
+                .iter()
+                .zip(accounts)
+                .map(|(account_meta, account)| (&account_meta.pubkey, account))
+                .collect::<Vec<_>>();
+            for account_info in account_infos.iter_mut() {
+                for account_meta in account_metas.iter_mut() {
+                    if account_info.key == account_meta.0 {
+                        let account = &mut account_meta.1;
+                        account.owner = *account_info.owner;
+                        account.lamports = **account_info.lamports.borrow();
+                        account.data = account_info.data.borrow().to_vec();
+                    }
+                }
+            }
+        }
+        res
+    }
+
+    fn create_mint(
+        program_id: &Pubkey,
+        authority_key: &Pubkey,
+        freeze_authority: Option<&Pubkey>,
+    ) -> (Pubkey, Account) {
+        let mint_key = Pubkey::new_unique();
+        let mut mint_account = Account::new(
+            mint_minimum_balance(),
+            spl_token::state::Mint::get_packed_len(),
+            program_id,
+        );
+        let mut rent_sysvar_account = create_account_for_test(&Rent::free());
+
+        do_process_instruction(
+            initialize_mint(program_id, &mint_key, authority_key, freeze_authority, 2).unwrap(),
+            vec![&mut mint_account, &mut rent_sysvar_account],
+        )
+        .unwrap();
+
+        (mint_key, mint_account)
+    }
+
+    #[test]
+    fn test_initialize() {
+        let user_key = Pubkey::new_unique();
+        let reward_numerator: u64 = 1;
+        let reward_denominator: u64 = 1_000;
+
+        let mut stake_pool_info = StakePoolInfo::new(user_key);
+
+        // reserved token account is already initialized
+        {
+            let old_account = stake_pool_info.reserved_account.clone();
+
+            do_process_instruction(
+                initialize_account(
+                    &spl_token::id(),
+                    &stake_pool_info.reserved_key,
+                    &stake_pool_info.stake_token_mint_key,
+                    &stake_pool_info.authority_key,
+                )
+                .unwrap(),
+                vec![
+                    &mut stake_pool_info.reserved_account,
+                    &mut stake_pool_info.stake_token_mint_account,
+                    &mut Account::default(),
+                    &mut create_account_for_test(&Rent::free()),
+                ],
+            )
+            .unwrap();
+
+            assert_eq!(
+                Err(CustomError::TokenInitializeAccountFailed.into()),
+                stake_pool_info.initialize_stake_pool(reward_numerator, reward_denominator)
+            );
+
+            stake_pool_info.reserved_account = old_account;
+        }
+
+        // reward token mint account is already initialized
+        {
+            let old_account = stake_pool_info.reward_mint_account.clone();
+
+            do_process_instruction(
+                initialize_mint(
+                    &spl_token::id(),
+                    &stake_pool_info.reward_mint_key,
+                    &stake_pool_info.authority_key,
+                    None,
+                    9,
+                )
+                .unwrap(),
+                vec![
+                    &mut stake_pool_info.reward_mint_account,
+                    &mut create_account_for_test(&Rent::free()),
+                ],
+            )
+            .unwrap();
+
+            assert_eq!(
+                Err(CustomError::TokenInitializeMintFailed.into()),
+                stake_pool_info.initialize_stake_pool(reward_numerator, reward_denominator)
+            );
+
+            stake_pool_info.reward_mint_account = old_account;
+        }
+
+        // initialized account correctly
+        {
+            assert_eq!(
+                Ok(()),
+                stake_pool_info.initialize_stake_pool(reward_numerator, reward_denominator)
+            );
+        }
+    }
+}
