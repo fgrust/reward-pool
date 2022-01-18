@@ -38,3 +38,17 @@ $ cargo clippy
 ```bash
 $ ./script/deploy.sh
 ```
+---
+## Design
+
+### State
+- Pool: the space, where the user can stake his SPL token and earn time-weighted LP rewards.
+- StakeUser: the user account that present his staking status, which contains stake amount and time cumulative reward amount.
+
+### Instructions
+- CreateStakePool: Initializes the stake pool creating LP reward mint and SPL reserved token account.
+- CreateStakeUser: Initializes the stake user specifying keys of user's wallet and the stake pool
+- Stake: Stakes SPL token to the stake pool, transfers SPL token from user's account to `reserved` in the stake pool, increases stake amount in the user's StakeUser account, updates the reward amount by staking period.
+- Unstake: Unstakes SPL token to the stake pool, transfers SPL token from `reserved` in the stake pool to the user's account, updates reward amount by staking period so far, decreases stake amount.
+- Claim: Claims time-cumulative rewards, lastly updates the reward amount and mint SPL reward token to the user's account.
+- Refresh: to continuously update the reward amount, can be called attaching other transactions, or manually by the Pool manager.
