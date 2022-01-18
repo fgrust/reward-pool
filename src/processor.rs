@@ -23,7 +23,7 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], input: &[u8]) -> P
 
     match instruction {
         InstructionType::CreatePool(init_data) => {
-            process_create_stake_pool(program_id, accounts, init_data.clone())
+            process_create_stake_pool(program_id, accounts, init_data)
         }
         InstructionType::CreateStakeUser => process_create_stake_user(program_id, accounts),
         InstructionType::Stake(StakeData { amount }) => process_stake(program_id, accounts, amount),

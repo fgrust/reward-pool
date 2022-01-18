@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use crate::error::CustomError;
 use solana_program::{
     instruction::{AccountMeta, Instruction},

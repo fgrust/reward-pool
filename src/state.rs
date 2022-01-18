@@ -44,6 +44,7 @@ impl Pack for Pool {
 
     fn unpack_from_slice(src: &[u8]) -> Result<Self, solana_program::program_error::ProgramError> {
         let input = array_ref![src, 0, POOL_SIZE];
+        #[allow(clippy::ptr_offset_with_cast)]
         let (
             is_initialized,
             bump_seed,
@@ -67,6 +68,7 @@ impl Pack for Pool {
 
     fn pack_into_slice(&self, dst: &mut [u8]) {
         let output = array_mut_ref![dst, 0, POOL_SIZE];
+        #[allow(clippy::ptr_offset_with_cast)]
         let (
             is_initialized,
             bump_seed,
@@ -118,6 +120,7 @@ impl Pack for StakeUser {
 
     fn unpack_from_slice(src: &[u8]) -> Result<Self, solana_program::program_error::ProgramError> {
         let input = array_ref![src, 0, STAKE_USER_SIZE];
+        #[allow(clippy::ptr_offset_with_cast)]
         let (is_initialized, owner, pool_pubkey, stake_amount, reward_owed, last_update) =
             array_refs![input, 1, PUBKEY_BYTES, PUBKEY_BYTES, 8, 8, 8];
 
@@ -133,6 +136,7 @@ impl Pack for StakeUser {
 
     fn pack_into_slice(&self, dst: &mut [u8]) {
         let output = array_mut_ref![dst, 0, STAKE_USER_SIZE];
+        #[allow(clippy::ptr_offset_with_cast)]
         let (is_initialized, owner, pool_pubkey, stake_amount, reward_owed, last_update) =
             mut_array_refs![output, 1, PUBKEY_BYTES, PUBKEY_BYTES, 8, 8, 8];
 
