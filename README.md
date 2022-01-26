@@ -1,4 +1,4 @@
-# Soldex Test Assignment
+# Staking Reward Pool
 
 ## Scenario
 
